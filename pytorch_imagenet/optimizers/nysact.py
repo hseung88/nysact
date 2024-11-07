@@ -15,7 +15,7 @@ class NysAct(Optimizer):
                  weight_decay=0.0005,
                  Tcov=5,
                  Tinv=50,
-                 rank_size=5,
+                 rank_size=50,
                  sketch='subcolumns',
                  nesterov=False,
                 ):

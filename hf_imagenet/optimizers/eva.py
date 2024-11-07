@@ -26,7 +26,7 @@ class Eva(optim.Optimizer):
     def __init__(self,
                  model,
                  lr=0.1,
-                 damping=0.06,
+                 damping=0.1,
                  fac_update_freq=5,
                  kfac_update_freq=5,
                  kfac_batch_size=16,

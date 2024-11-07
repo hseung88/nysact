@@ -10,13 +10,13 @@ from .utils.torch_utils import build_layer_map
 class FOOF(Optimizer):
     def __init__(self,
                  params,
-                 lr=0.01,
+                 lr=0.1,
                  momentum=0.9,
                  stat_decay=0.95,
-                 damping=0.1,
+                 damping=1.0,
                  weight_decay=1e-5,
                  Tcov=5,
-                 Tinv=50):
+                 Tinv=5):
         if lr < 0.0:
             raise ValueError("Invalid learning rate: {}".format(lr))
         if weight_decay < 0.0:
