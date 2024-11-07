@@ -85,7 +85,7 @@ class FOOF(Optimizer):
         if 'ema_A' not in state:
             state['ema_A'] = torch.eye(A.size(0), device=A.device)
             
-        state['ema_A'].mul_(1 - stat_decay).add_(A, alpha=stat_decay)
+        state['ema_A'].mul_(stat_decay).add_(A, alpha=1.0 - stat_decay)
 
     @torch.no_grad()
     def step(self, closure=None):
