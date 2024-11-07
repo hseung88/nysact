@@ -54,7 +54,7 @@ torchrun --nproc_per_node=4 ./train.py --data-path /data/imagenet --model resnet
 --norm-weight-decay 0.0 --label-smoothing 0.1 --mixup-alpha 0.2 --cutmix-alpha 1.0 --train-crop-size 176 \
 --val-resize-size 232 --ra-sampler --ra-reps 4 --output-dir ./outputs/resnet50_nysact_100
 ```
-2. Deit-Small
+2. DeiT-Small
 ```bash
 cd ./hf_imagenet
 torchrun --nproc_per_node=4 ./train.py --model deit_small_patch16_224 --sched cosine --epochs 100 --opt nysact \
