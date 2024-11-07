@@ -14,19 +14,15 @@ from torch import nn
 from torch.utils.data.dataloader import default_collate
 from torchvision.transforms.functional import InterpolationMode
 from transforms import get_mixup_cutmix
-#from optimizers.kfac import KFAC
+
 from optimizers.kfac2 import KFAC
 from optimizers.foof import FOOF
 from optimizers.eva import Eva
-from optimizers.adahessian import Adahessian
-from optimizers.mac import MAC
-from optimizers.smac import SMAC
-from optimizers.nysact_mod import NysAct_S
-from optimizers.shaper import Shaper
+from optimizers.nysact import NysAct
 
 
-
-def train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, args, model_ema=None, scaler=None, preconditioner=None):
+def train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, args, model_ema=None, scaler=None,
+                    preconditioner=None):
     model.train()
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter("lr", utils.SmoothedValue(window_size=1, fmt="{value}"))
@@ -43,28 +39,20 @@ def train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, arg
 
         optimizer.zero_grad()
         if scaler is not None:
-            if args.opt.lower() in ['adahessian']:
-                scaler.scale(loss).backward(create_graph = True)
-            else:
-                scaler.scale(loss).backward()                
+            scaler.scale(loss).backward()
             if args.clip_grad_norm is not None:
                 # we should unscale the gradients of optimizer's assigned params if do gradient clipping
                 scaler.unscale_(optimizer)
                 nn.utils.clip_grad_norm_(model.parameters(), args.clip_grad_norm)
             if args.opt.lower() in ['eva', 'kfac'] and preconditioner is not None:
-            #if args.opt.lower() in ['eva'] and preconditioner is not None:
                 preconditioner.step()    
             scaler.step(optimizer)
             scaler.update()
         else:
-            if args.opt.lower() in ['adahessian']:
-                loss.backward(create_graph = True)
-            else:
-                loss.backward()
+            loss.backward()
             if args.clip_grad_norm is not None:
                 nn.utils.clip_grad_norm_(model.parameters(), args.clip_grad_norm)
-            #if args.opt.lower() in ['eva', 'kfac'] and preconditioner is not None:
-            if args.opt.lower() in ['eva'] and preconditioner is not None:
+            if args.opt.lower() in ['eva', 'kfac'] and preconditioner is not None:
                 preconditioner.step()
             optimizer.step()
 
@@ -304,9 +292,6 @@ def main(args):
         )
     elif opt_name == "adamw":
         optimizer = torch.optim.AdamW(parameters, lr=args.lr, weight_decay=args.weight_decay)
-    #elif opt_name == "kfac":
-    #    optimizer = KFAC(parameters, lr=args.lr, damping=args.damping, weight_decay=args.weight_decay)
-    #    optimizer.model = model
     elif opt_name == "foof":
         optimizer = FOOF(parameters, lr=args.lr, damping=args.damping, weight_decay=args.weight_decay)
         optimizer.model = model
@@ -314,19 +299,9 @@ def main(args):
         optimizer = torch.optim.SGD(parameters, lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
     elif opt_name == "kfac":
         optimizer = torch.optim.SGD(parameters, lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
-    elif opt_name == 'adahessian':
-        optimizer = Adahessian(model_params, args.lr, weight_decay=args.weight_decay, eps=args.eps)    
-    elif opt_name == "mac":
-        optimizer = MAC(parameters, lr=args.lr, momentum=args.momentum, damping=args.damping, Tinv=args.update, weight_decay=args.weight_decay)
-        optimizer._configure(data_loader, model, device)
-    elif opt_name == "smac":
-        optimizer = SMAC(parameters, lr=args.lr, damping=args.damping, update_freq=args.update, weight_decay=args.weight_decay)
-        optimizer._configure(data_loader, model, device)
     elif opt_name == "nysact":
-        optimizer = NysAct(parameters, lr=args.lr, damping=args.damping, weight_decay=args.weight_decay, rank_size=args.rank_size)
-        optimizer.model = model
-    elif opt_name == "shaper":
-        optimizer = Shaper(parameters, lr=args.lr, damping=args.damping, weight_decay=args.weight_decay)
+        optimizer = NysAct(parameters, lr=args.lr, damping=args.damping, weight_decay=args.weight_decay,
+                           rank_size=args.rank_size, sketch='subcolumns')
         optimizer.model = model
     else:
         raise RuntimeError(f"Invalid optimizer {args.opt}. Only SGD, RMSprop and AdamW are supported.")
@@ -473,8 +448,7 @@ def get_args_parser(add_help=True):
     )
     parser.add_argument('--eps', default=1e-8, type=float, help='eps for numerical stability')
     parser.add_argument('--damping', default=0.01, type=float, help='damping factor')
-    parser.add_argument('--rank_size', default=10, type=int, help='the number of components needed for nystrom approx.')
-    parser.add_argument('--update', default=50, type=int, help='inverse update frequency')
+    parser.add_argument('--rank_size', default=10, type=int, help='sketch rank')
     parser.add_argument(
         "--norm-weight-decay",
         default=None,

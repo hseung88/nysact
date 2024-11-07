@@ -6,7 +6,7 @@ import numpy as np
 #import horovod.torch as hvd
 #from .utils import backend
 
-from .utils.opt_utils2 import get_vector_a, get_vector_g
+from .utils.opt_utils import get_vector_a, get_vector_g
 import logging
 logger = logging.getLogger()
 

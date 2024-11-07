@@ -1,130 +1,231 @@
-import math
 import torch
+import torch.nn.functional as F
+import math
+import numpy as np
+import torch.nn as nn
 
 
-def _adam_step(p, state, lr, beta1=0.9, beta2=0.999, eps=1e-8):
-    grad = p.grad
+def extract_patches(x, kernel_size, stride, padding, depthwise=False):
+    """
+    x: input feature map of shape (B x C x H x W)
+    kernel_size: the kernel size of the conv filter (tuple of two elements)
+    stride: the stride of conv operation  (tuple of two elements)
+    padding: number of paddings. be a tuple of two elements
 
-    if len(state) == 0:
-        state['step'] = 0
-        state['exp_avg'] = torch.zeros_like(p)
-        state['exp_avg_sq'] = torch.zeros_like(p)
+    return: (batch_size, out_h, out_w, in_c*kh*kw)
+    """
+    if isinstance(padding, str):
+        padding = (
+            ((stride[0] - 1) * x.size(2) - stride[0] + kernel_size[0]) // 2,
+            ((stride[1] - 1) * x.size(3) - stride[1] + kernel_size[1]) // 2,
+        )
 
-    exp_avg, exp_avg_sq = state['exp_avg'], state['exp_avg_sq']
-    state['step'] += 1
-    exp_avg.mul_(beta1).add_(grad, alpha=1 - beta1)
-    exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1 - beta2)
+    if padding[0] + padding[1] > 0:
+        x = F.pad(x, (padding[1], padding[1], padding[0],
+                      padding[0])).data  # Actually check dims
 
-    denom = exp_avg_sq.sqrt().add_(eps)
+    # Tensor.unfold(dimension, size, step)
+    x = x.unfold(2, kernel_size[0], stride[0])
+    x = x.unfold(3, kernel_size[1], stride[1])
+    # x.shape = [B x C x oH x oW x K x K]
 
-    bias_correction1 = 1.0 - beta1 ** state['step']
-    bias_correction2 = 1.0 - beta2 ** state['step']
-    step_size = lr * math.sqrt(bias_correction2) / bias_correction1
-    p.data.addcdiv_(exp_avg, denom, value=-step_size)
+    if depthwise:
+        x = x.reshape(x.size(0) * x.size(1) * x.size(2) * x.size(3),
+                      x.size(4) * x.size(5))
+    else:
+        x = x.transpose_(1, 2).transpose_(2, 3).contiguous()
+        # x.shape = [B x oH x oW x (C x K x K)]
+        x = x.view(
+            x.size(0) * x.size(1) * x.size(2),
+            x.size(3) * x.size(4) * x.size(5))
 
-
-def adam_step(optimizer, layer_info, lr, betas, eps):
-    beta1, beta2 = betas
-
-    for pname, p in layer_info['params']:
-        state = optimizer.state[p]
-        if p.grad is None:
-            continue
-
-        _adam_step(p, state, lr, beta1, beta2, eps)
+    return x
 
 
-def momentum_step(optimizer, layer_info, step_size, momentum, weight_decay,
-                  apply_wdecay=True):
+def reshape_grad(layer):
+    """
+    returns the gradient reshaped for KFAC, shape=[batch_size, output_dim, input_dim]
+    """
+    classname = layer.__class__.__name__
+
+    g = layer.weight.grad
+
+    if classname == 'Conv2d':
+        grad_mat = g.view(g.size(0), -1)  # n_filters * (in_c * kw * kh)
+    else:
+        grad_mat = g
+
+    # include the bias into the weight
+    if layer.bias is not None:
+        grad_mat = torch.cat([grad_mat, layer.bias.grad.view(-1, 1)], 1)
+
+    return grad_mat
+
+
+def sgd_step(optimizer):
+    for group in optimizer.param_groups:
+        weight_decay = group['weight_decay']
+        step_size = group['lr']
+
+        for p in group['params']:
+            if p.grad is None:
+                continue
+
+            d_p = p.grad.data
+            d_p.add_(p.data, alpha=weight_decay)
+
+            # p.data.mul_(1.0 - step_size * weight_decay)
+            p.data.add_(d_p, alpha=-step_size)
+
+
+def momentum_step(optimizer):
     # update parameters
-    for _, p in layer_info['params']:
-        d_p = p.grad.data
+    for group in optimizer.param_groups:
+        weight_decay = group['weight_decay']
+        step_size = group['lr']
+        momentum = group['momentum']
 
-        if weight_decay != 0 and apply_wdecay:
-            d_p.add_(p.data, alpha=weight_decay)
+        for p in group['params']:
+            if p.grad is None:
+                continue
 
-        if momentum != 0:
-            param_state = optimizer.state[p]
-            if 'momentum_buffer' not in param_state:
-                param_state['momentum_buffer'] = torch.zeros_like(p)
+            d_p = p.grad.data
 
-            d_p = param_state['momentum_buffer'].mul_(momentum).add_(d_p)
+            if weight_decay != 0:
+                d_p.add_(p.data, alpha=weight_decay)
 
-        p.data.add_(d_p, alpha=-step_size)
+            if momentum != 0:
+                param_state = optimizer.state[p]
+
+                if 'momentum_buffer' not in param_state:
+                    param_state['momentum_buffer'] = torch.zeros_like(p)
+
+                d_p = param_state['momentum_buffer'].mul_(momentum).add_(d_p)
+            
+            #if weight_decay != 0:
+            #    p.data.mul_(1-step_size*weight_decay)
+            p.data.add_(d_p, alpha=-step_size)
 
 
-def nag_step(optimizer, layer_info, lr, momentum, weight_decay,
-             apply_wdecay=True):
-    for _, p in layer_info['params']:
-        d_p = p.grad.data
-
-        if weight_decay != 0 and apply_wdecay:
-            d_p.add_(p.data, alpha=weight_decay)
+def nag_step(optimizer):
+    for group in optimizer.param_groups:
+        weight_decay = group['weight_decay']
+        step_size = group['lr']
+        momentum = group['momentum']
         
-        #if weight_decay != 0 and apply_wdecay and no_prox == True:
-        #    p.data.mul_(1-lr*weight_decay)
+        for p in group['params']:
+            if p.grad is None:
+                continue
+
+            d_p = p.grad.data
+
+            if momentum != 0:
+                param_state = optimizer.state[p]
+                if 'momentum_buff' not in param_state:
+                    param_state['momentum_buff'] = d_p.clone()
+                else:
+                    buf = param_state['momentum_buff']
+                    buf.mul_(momentum).add_(d_p)
+                    d_p.add_(buf, alpha=momentum)
+
+            if weight_decay != 0:
+                p.data.mul_(1-step_size*weight_decay)
+                p.data.add_(d_p, alpha=-step_size)
+
+
+def get_vector_a(a, layer):
+    """Return vectorized input activation (m_a)"""
+    if isinstance(layer, nn.Linear): 
+        a = torch.mean(a, list(range(len(a.shape)))[0:-1])
+        if layer.bias is not None:
+            a = torch.cat([a, a.new(1).fill_(1)])
+        return a
+
+    elif isinstance(layer, nn.Conv2d):
+        # batch averag first
+        a = torch.mean(a, dim=0, keepdim=True)
+        # extract patch
+        a = _extract_patches(a, layer.kernel_size, layer.stride, layer.padding)
+        a = torch.mean(a, [0, 1, 2])
+        if layer.bias is not None:
+            a = torch.cat([a, a.new(1).fill_(1)])
+        return a
         
-        if momentum != 0:
-            param_state = optimizer.state[p]
-            if 'momentum_buff' not in param_state:
-                param_state['momentum_buff'] = d_p.clone()
-            else:
-                buf = param_state['momentum_buff']
-                buf.mul_(momentum).add_(d_p)
-                d_p.add_(buf, alpha=momentum)
+    else:
+        raise NotImplementedError("KFAC does not support layer: ".format(layer))
 
-        p.data.add_(d_p, alpha=-lr)
+
+def _extract_patches(x, kernel_size, stride, padding):
+    """Extract patches from convolutional layer
+
+    Args:
+      x: The input feature maps.  (batch_size, in_c, h, w)
+      kernel_size: the kernel size of the conv filter (tuple of two elements)
+      stride: the stride of conv operation  (tuple of two elements)
+      padding: number of paddings. be a tuple of two elements
+    
+    Returns:
+      Tensor of shape (batch_size, out_h, out_w, in_c*kh*kw)
+    """
+    if padding[0] + padding[1] > 0:
+        x = F.pad(x, (padding[1], padding[1], padding[0],
+                      padding[0])).data  # Actually check dims
+    x = x.unfold(2, kernel_size[0], stride[0])
+    x = x.unfold(3, kernel_size[1], stride[1])
+    x = x.transpose_(1, 2).transpose_(2, 3).contiguous()
+    x = x.view(
+        x.size(0), x.size(1), x.size(2),
+        x.size(3) * x.size(4) * x.size(5))
+    return x
+
+def get_vector_g(g, layer):
+    """Return vectorized deviation w.r.t. the pre-activation output (m_g)"""
+    if isinstance(layer, nn.Linear):
+        g = torch.mean(g, list(range(len(g.shape)))[0:-1])
+        return g
+
+    elif isinstance(layer, nn.Conv2d):
+        g = torch.mean(g, [0, 2, 3])
+        return g
+
+    else:
+        raise NotImplementedError("KFAC does not support layer: ".format(layer))
+
+def get_factor_A(a, layer):
+    """Return KF A"""
+    if isinstance(layer, nn.Linear): 
+        if len(a.shape) > 2:
+            a = torch.mean(a, list(range(len(a.shape)))[1:-1]) # average on sequential dim (if any)
+        if layer.bias is not None:
+            a = torch.cat([a, a.new(a.size(0), 1).fill_(1)], 1)
+        return a.t() @ (a / a.size(0))
+
+    elif isinstance(layer, nn.Conv2d):
+        # extract patch
+        a = _extract_patches(a, layer.kernel_size, layer.stride, layer.padding)
+        a = torch.mean(a, [1, 2])  # average on spatial dims
+        if layer.bias is not None:
+            a = torch.cat([a, a.new(a.size(0), 1).fill_(1)], 1)
+        return a.t() @ (a / a.size(0))
         
-        #if weight_decay != 0 and apply_wdecay and no_prox == False:
-        #    p.data.div_(1 + lr*weight_decay)
-      
+    else:
+        raise NotImplementedError("KFAC does not support layer: ".format(layer))
 
-def _adan_step(p, state, lr, beta1=0.9, beta2=0.9, beta3=0.99, eps=1e-8, weight_decay=1e-4):
-    grad = p.grad
+def get_factor_G(g, layer):
+    """Return KF G"""
+    if isinstance(layer, nn.Linear):
+        if len(g.shape) > 2:
+            g = torch.mean(g, list(range(len(g.shape)))[1:-1]) # average on sequential dim (if any)
+        return g.t() @ (g / g.size(0))
 
-    if len(state) == 0:
-        state['step'] = 0
-        state['exp_avg'] = torch.zeros_like(p)
-        state['exp_avg_sq'] = torch.zeros_like(p)
-        state['exp_avg_diff'] = torch.zeros_like(p)
-        state['neg_pre_grad'] = p.grad.clone()
-        
-    exp_avg, exp_avg_sq = state['exp_avg'], state['exp_avg_sq']
-    exp_avg_diff, neg_grad_or_diff = state['exp_avg_diff'], state['neg_pre_grad']
-    
-    state['step'] += 1
-    
-    bias_correction1 = 1.0 - beta1 ** state['step']
-    bias_correction2 = 1.0 - beta2 ** state['step']
-    bias_correction3 = 1.0 - beta3 ** state['step']
-    bias_correction3_sqrt = math.sqrt(bias_correction3)
-    
-    neg_grad_or_diff.add_(grad)
-    exp_avg.mul_(beta1).add_(grad, alpha=1 - beta1)  # m_t
-    exp_avg_diff.mul_(beta2).add_(neg_grad_or_diff,
-                                  alpha=1 - beta2)  # diff_t
-    neg_grad_or_diff.mul_(beta2).add_(grad)
-    exp_avg_sq.mul_(beta3).addcmul_(neg_grad_or_diff,
-                                    neg_grad_or_diff,
-                                    value=1 - beta3)  # n_t
+    elif isinstance(layer, nn.Conv2d):
+        g = torch.mean(g, [2, 3]) # average on spatial dims
+        return g.t() @ (g / g.size(0))
 
-    denom = ((exp_avg_sq).sqrt() / bias_correction3_sqrt).add_(eps)
-    step_size_diff = lr * beta2 / bias_correction2
-    step_size = lr / bias_correction1
-    
-    p.data.addcdiv_(exp_avg, denom, value=-step_size)
-    p.data.addcdiv_(exp_avg_diff, denom, value=-step_size_diff)
-    p.data.div_(1 + lr * weight_decay)
+    else:
+        raise NotImplementedError("KFAC does not support layer: ".format(layer))
 
-    neg_grad_or_diff.zero_().add_(grad, alpha=-1.0)
-    
-
-def adan_step(optimizer, layer_info, lr, betas, eps, weight_decay):
-    beta1, beta2, beta3 = betas
-
-    for pname, p in layer_info['params']:
-        state = optimizer.state[p]
-        if p.grad is None:
-            continue
-
-        _adan_step(p, state, lr, beta1, beta2, beta3, eps, weight_decay)
+def mat_inv(x):
+    u = torch.linalg.cholesky(x)
+    return torch.cholesky_inverse(u)
+                

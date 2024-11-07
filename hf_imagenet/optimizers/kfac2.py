@@ -5,7 +5,7 @@ import numpy as np
 #import horovod.torch as hvd
 #import kfac.backend as backend
 
-from .utils.opt_utils2 import get_factor_A, get_factor_G, mat_inv
+from .utils.opt_utils import get_factor_A, get_factor_G, mat_inv
 import logging
 logger = logging.getLogger()
 

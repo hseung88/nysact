@@ -11,15 +11,8 @@ import torch.optim as optim
 
 from timm.models import group_parameters
 
-from optimizers.adaact_v2 import AdaAct
-from optimizers.kfac2 import KFAC
-#from optimizers.kfac import KFAC
 from optimizers.foof import FOOF
-from optimizers.eva import Eva
-from optimizers.mac import MAC
-from optimizers.smac import SMAC
-from optimizers.nysact_mod import NysAct
-from optimizers.shaper import Shaper
+from optimizers.nysact import NysAct
 
 _logger = logging.getLogger(__name__)
 
@@ -340,30 +333,18 @@ def create_optimizer_v2(
     elif opt_lower == 'lion':
         opt_args.pop('eps', None)
         optimizer = Lion(parameters, **opt_args)
-    elif opt_lower == 'adaact':
-        optimizer = AdaAct(parameters, **opt_args)
-        optimizer.model = model_or_params
     elif opt_lower == 'kfac':
         opt_args.pop('eps', None)
         optimizer = optim.SGD(parameters, momentum=momentum, nesterov=False, **opt_args)
-    #elif opt_lower == 'kfac':
-    #    optimizer = KFAC(parameters, momentum=0.9, stat_decay=0.95, damping=10.0, Tcov=5, Tinv=5, **opt_args)   
-    #    optimizer.model = model_or_params
     elif opt_lower == 'foof':
         optimizer = FOOF(parameters, momentum=0.9, stat_decay=0.95, damping=1.0, Tcov=5, Tinv=5, **opt_args)   
         optimizer.model = model_or_params
     elif opt_lower == 'eva':
         opt_args.pop('eps', None)
         optimizer = optim.SGD(parameters, momentum=momentum, nesterov=False, **opt_args)
-    elif opt_lower == 'mac':
-        optimizer = MAC(parameters, momentum=0.9, damping=0.5, **opt_args)   
-    elif opt_lower == 'smac':
-        optimizer = SMAC(parameters, **opt_args) 
     elif opt_lower == 'nysact':
-        optimizer = NysAct(parameters, momentum=0.9, stat_decay=0.95, damping=1.0, Tcov=5, Tinv=5, rank_size=20, **opt_args)   
-        optimizer.model = model_or_params
-    elif opt_lower == 'shaper':
-        optimizer = Shaper(parameters, **opt_args)   
+        optimizer = NysAct(parameters, momentum=0.9, stat_decay=0.95, damping=1.0, Tcov=5, Tinv=5, rank_size=20,
+                           **opt_args)
         optimizer.model = model_or_params
         
     # second order

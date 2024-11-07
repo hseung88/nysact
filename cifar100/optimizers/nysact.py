@@ -2,13 +2,10 @@ import logging as logger
 import torch
 import torch.nn as nn
 from torch.optim import Optimizer
-from .utils.opt_utils2 import extract_patches, reshape_grad, momentum_step, nag_step
+from .utils.opt_utils import extract_patches, reshape_grad, momentum_step, nag_step
 from .utils.torch_utils import build_layer_map
 
 class NysAct(Optimizer):
-    """
-    Nystrom approximation based optimizer with activation-based sketching.
-    """
     def __init__(self,
                  params,
                  lr=0.1,
@@ -68,7 +65,7 @@ class NysAct(Optimizer):
             return
 
         stat_decay = group['stat_decay']
-        actv = forward_input[0].detach().clone()
+        actv = forward_input[0].data
 
         if isinstance(module, nn.Conv2d):
             depthwise = module.groups == actv.size(1)
@@ -153,14 +150,14 @@ class NysAct(Optimizer):
         b_inv_update = (group['step'] % self.Tinv) == 0
         group['step'] += 1
 
-        bias_correction1 = 1.0 - (stat_decay ** group['ema_step'])
+        bias_correction = 1.0 - (stat_decay ** group['ema_step'])
 
         for layer in self.layer_map:
             if not isinstance(layer, (nn.Linear, nn.Conv2d)):
                 continue
 
             if b_inv_update:
-                self.update_inverse(layer, damping, bias_correction1)
+                self.update_inverse(layer, damping, bias_correction)
 
             state = self.state[layer]
             grad_mat = reshape_grad(layer)

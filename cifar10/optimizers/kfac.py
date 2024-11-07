@@ -3,17 +3,17 @@
 import math
 import torch
 import torch.optim as optim
-from .utils.tensor_utils import reshape_grad
+from .utils.opt_utils import reshape_grad
 from .utils.kfac_utils import (ComputeCovA, ComputeCovG)
 from .utils.kfac_utils import update_running_stat
 
 class KFAC(optim.Optimizer):
     def __init__(self,
                  params,
-                 lr=0.001,
+                 lr=0.1,
                  momentum=0.9,
                  stat_decay=0.95,
-                 damping=0.001,
+                 damping=0.01,
                  kl_clip=0.001,
                  weight_decay=1e-5,
                  Tcov=10,
@@ -66,7 +66,7 @@ class KFAC(optim.Optimizer):
 
     def _save_grad_output(self, module, grad_input, grad_output):
         # Accumulate statistics for Fisher matrices
-        if self.acc_stats and self.steps % self.Tcov == 0:
+        if self.steps % self.Tcov == 0:
             gg = self.CovGHandler(grad_output[0].data, module, self.batch_averaged)
             # Initialize buffers
             if self.steps == 0:
