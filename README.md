@@ -5,6 +5,10 @@ leverages the Nystrom approximation to stabilize and improve the training of lar
 The algorithm, introduced in our paper accepted at IEEE BigData 2024, provides an efficient alternative to conventional 
 second-order optimization methods by approximating the activation covariance matrix.
 
+> Accepted at 2024 IEEE International Conference on Big Data, Washington DC, USA, December 2024.
+
+---
+
 ## Overview
 
 Deep learning models rely heavily on efficient and effective optimization strategies. While first-order methods are 
@@ -22,6 +26,7 @@ for gradient preconditioning. This approach offers:
 - **Adaptable to Large Models**: Reduces memory and time complexity, making it suitable for large architectures like ResNet and Vision Transformers.
 - **Empirical Performance**: Outperforms traditional first-order and even some second-order methods in accuracy and training time on benchmarks like CIFAR and ImageNet.
 
+---
 ## Installation
 
 1. Clone the repository:
@@ -62,6 +67,8 @@ torchrun --nproc_per_node=4 ./train.py --model deit_small_patch16_224 --sched co
 --aug-repeats 3 --aa rand-m7-mstd0.5-inc1 --smoothing 0.1 --remode pixel --reprob 0.25 \
 --drop 0.0 --drop-path 0.2 --mixup 0.8 --cutmix 1.0 --data-dir /data/imagenet --pin-mem True;
 ```
+
+---
 
 ## Citation
 ```bash
